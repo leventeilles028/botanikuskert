@@ -5,13 +5,12 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: #e0f7e0;
+            background: #d6ede7;
             margin: 20px;
         }
 
         #gardenGrid {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
             gap: 10px;
             margin: 20px 0;
         }
@@ -30,9 +29,9 @@
             font-size: 40px;
         }
 
-            .plot:hover {
-                transform: scale(1.05);
-            }
+        .plot:hover {
+            transform: scale(1.05);
+        }
 
         #stats {
             display: flex;
@@ -88,11 +87,23 @@
             cursor: pointer;
         }
 
+        #plantList {
+            background: #ffffff;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .plant-item {
+            margin: 8px 0;
+            font-size: 16px;
+            color: #333;
+        }
+
         @keyframes slideIn {
             from {
                 transform: translateX(100%);
             }
-
             to {
                 transform: translateX(0);
             }
@@ -110,6 +121,11 @@
     </div>
 
     <div id="gardenGrid"></div>
+
+    <div id="plantList">
+        <h2>Növények árai</h2>
+        <div id="plantsContainer"></div>
+    </div>
 
     <div id="shop">
         <h2>Kertészeti Bolt</h2>
@@ -152,7 +168,9 @@
                 fertilizer: 0,
                 composter: 0,
                 tools: 0,
-                rainwater: 0
+                autoWater: 0,
+                plotExpansion: 0,
+                autoCollect: 0
             }
         };
 
@@ -182,10 +200,24 @@
                 effect: 'tools'
             },
             {
-                name: "Esővíz Gyűjtő",
-                description: "+3 víz/nap szintenként",
-                cost: 60,
-                effect: 'rainwater'
+                name: "Automatikus Öntözés",
+                description: "Automatikusan megöntözi az összes növényt naponta",
+                cost: 500,
+                effect: 'autoWater',
+                singlePurchase: true
+            },
+            {
+                name: "Kert Bővítés",
+                description: "Növeli a helyek számát (szintenként +1 sor és oszlop)",
+                cost: 1000,
+                effect: 'plotExpansion'
+            },
+            {
+                name: "Automatikus Betakarítás",
+                description: "Automatikusan begyűjti az érett növényeket",
+                cost: 3000,
+                effect: 'autoCollect',
+                singlePurchase: true
             }
         ];
 
@@ -219,6 +251,8 @@
 
         function renderGarden() {
             const grid = document.getElementById('gardenGrid');
+            const gridSize = 5 + state.upgrades.plotExpansion;
+            grid.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
             grid.innerHTML = '';
 
             state.plots.forEach((plot, index) => {
@@ -228,15 +262,15 @@
                 if (plot) {
                     const progress = Math.min(plot.growthStage / plot.growthTime * 100, 100);
                     div.innerHTML = `
-                                <div style="position:relative; height:100%; width:100%">
-                                    <div style="position:absolute; bottom:0; left:0;
-                                          height:${progress}%;
-                                          background:rgba(0,0,0,0.3);
-                                          width:100%"></div>
-                                    ${plot.growthStage >= plot.growthTime ? '🌟' : plot.emoji}
-                                    ${plot.watered ? '<div style="position:absolute; top:2px; right:2px">💧</div>' : ''}
-                                </div>
-                            `;
+                        <div style="position:relative; height:100%; width:100%">
+                            <div style="position:absolute; bottom:0; left:0;
+                                  height:${progress}%;
+                                  background:rgba(0,0,0,0.3);
+                                  width:100%"></div>
+                            ${plot.growthStage >= plot.growthTime ? '🌟' : plot.emoji}
+                            ${plot.watered ? '<div style="position:absolute; top:2px; right:2px">💧</div>' : ''}
+                        </div>
+                    `;
                 }
 
                 div.onclick = () => handlePlotClick(index);
@@ -287,16 +321,35 @@
         }
 
         function gameLoop() {
-            state.water += 10 +
-                (state.upgrades.sprinkler * 5) +
-                (state.upgrades.rainwater * 3);
+            state.water += 10 + (state.upgrades.sprinkler * 5);
 
+            // Automatikus öntözés
+            if (state.upgrades.autoWater) {
+                state.plots.forEach(plot => {
+                    if (plot) plot.watered = true;
+                });
+            }
+
+            // Növekedés feldolgozása
             state.plots.forEach(plot => {
                 if (plot && plot.watered) {
                     plot.growthStage += 1 + (state.upgrades.fertilizer * 0.20);
                     plot.watered = false;
                 }
             });
+
+            // Automatikus betakarítás
+            if (state.upgrades.autoCollect) {
+                state.plots.forEach((plot, index) => {
+                    if (plot && plot.growthStage >= plot.growthTime) {
+                        const bonus = 1 + (state.upgrades.composter * 0.10);
+                        const yieldAmount = Math.round(plot.yield * bonus);
+                        state.money += yieldAmount;
+                        state.plots[index] = null;
+                        createAlert(`Automatikus betakarítás: ${plot.emoji} $${yieldAmount}!`);
+                    }
+                });
+            }
 
             state.day++;
             updateDisplay();
@@ -328,28 +381,63 @@
                 const div = document.createElement('div');
                 div.className = 'upgrade';
                 const currentLevel = state.upgrades[upgrade.effect];
-                const nextCost = upgrade.cost * (currentLevel + 1);
+                const isSinglePurchase = upgrade.singlePurchase;
+                const maxed = isSinglePurchase && currentLevel >= 1;
+                const nextCost = isSinglePurchase ? upgrade.cost : upgrade.cost * (currentLevel + 1);
+
                 div.innerHTML = `
-                            <div>
-                                <h3>${upgrade.name} (Szint: ${currentLevel})</h3>
-                                <p>${upgrade.description}</p>
-                            </div>
-                            <button onclick="buyUpgrade('${upgrade.effect}')">$${nextCost}</button>
-                        `;
+                    <div>
+                        <h3>${upgrade.name}${!isSinglePurchase ? ` (Szint: ${currentLevel})` : ''}</h3>
+                        <p>${upgrade.description}</p>
+                    </div>
+                    ${maxed ? 
+                        '<button disabled>Megvéve</button>' : 
+                        `<button onclick="buyUpgrade('${upgrade.effect}')">$${nextCost}</button>`
+                    }
+                `;
                 upgradesDiv.appendChild(div);
+            });
+        }
+
+        function renderPlantList() {
+            const container = document.getElementById('plantsContainer');
+            container.innerHTML = '';
+            Object.values(PLANTS).forEach(plant => {
+                const div = document.createElement('div');
+                div.className = 'plant-item';
+                div.textContent = `${plant.name} (Vétel: $${plant.cost}, Eladás: $${plant.yield})`;
+                container.appendChild(div);
             });
         }
 
         function buyUpgrade(type) {
             const upgrade = UPGRADES.find(u => u.effect === type);
             const currentLevel = state.upgrades[type];
-            const nextCost = upgrade.cost * (currentLevel + 1);
+            const isSinglePurchase = upgrade.singlePurchase;
+            const nextCost = isSinglePurchase ? upgrade.cost : upgrade.cost * (currentLevel + 1);
+
+            if (isSinglePurchase && currentLevel >= 1) {
+                createAlert("Ezt a fejlesztést már megvetted!");
+                return;
+            }
+
             if (state.money >= nextCost) {
                 state.money -= nextCost;
-                state.upgrades[type]++;
-                createAlert(`Vásároltál: ${upgrade.name} szint ${state.upgrades[type]}!`);
+                state.upgrades[type] = isSinglePurchase ? 1 : currentLevel + 1;
+
+                if (type === 'plotExpansion') {
+                    const newSize = 5 + state.upgrades.plotExpansion;
+                    const newPlotsCount = newSize * newSize;
+                    if (newPlotsCount > state.plots.length) {
+                        const additional = newPlotsCount - state.plots.length;
+                        state.plots = [...state.plots, ...Array(additional).fill(null)];
+                    }
+                }
+
+                createAlert(`Vásároltál: ${upgrade.name}${!isSinglePurchase ? ` szint ${state.upgrades[type]}` : ''}!`);
                 updateDisplay();
                 renderUpgrades();
+                renderGarden();
             } else {
                 createAlert("Nincs elég pénzed erre a fejlesztésre!");
             }
@@ -358,6 +446,7 @@
         function init() {
             renderUpgrades();
             renderGarden();
+            renderPlantList();
             setInterval(gameLoop, 30000);
         }
 
